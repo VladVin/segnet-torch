@@ -15,11 +15,11 @@ function M.setup(opt, checkpoint)
       local modelPath = paths.concat(opt.resume, checkpoint.modelFile)
       assert(paths.filep(modelPath), 'Saved model not found: ' .. modelPath)
       print('=> Resuming model from ' .. modelPath)
-      model = torch.load(modelPath)
+      model = torch.load(modelPath):cuda()
    elseif opt.retrain ~= 'none' then
       assert(paths.filep(opt.retrain), 'File not found: ' .. opt.retrain)
       print('Loading model from file: ' .. opt.retrain)
-      model = torch.load(opt.retrain)
+      model = torch.load(opt.retrain):cuda()
    else
       print('=> Creating model from file: models/' .. opt.netType .. '.lua')
       model = require('models/' .. opt.netType)(opt)
@@ -53,6 +53,35 @@ function M.setup(opt, checkpoint)
 
    local criterion = cudnn.SpatialCrossEntropyCriterion()
    return model, criterion
+end
+
+function M.shareGradInput(model)
+   local function sharingKey(m)
+      local key = torch.type(m)
+      if m.__shareGradInputKey then
+         key = key .. ':' .. m.__shareGradInputKey
+      end
+      return key
+   end
+
+   -- Share gradInput for memory efficient backprop
+   local cache = {}
+   model:apply(function(m)
+      local moduleType = torch.type(m)
+      if torch.isTensor(m.gradInput) and moduleType ~= 'nn.ConcatTable' then
+         local key = sharingKey(m)
+         if cache[key] == nil then
+            cache[key] = torch.CudaStorage(1)
+         end
+         m.gradInput = torch.CudaTensor(cache[key], 1, 0)
+      end
+   end)
+   for i, m in ipairs(model:findModules('nn.ConcatTable')) do
+      if cache[i % 2] == nil then
+         cache[i % 2] = torch.CudaStorage(1)
+      end
+      m.gradInput = torch.CudaTensor(cache[i % 2], 1, 0)
+   end
 end
 
 return M

@@ -56,7 +56,7 @@ for epoch = startEpoch, opt.nEpochs do
       print(' * Best model ', testTop1, testTop5)
    end
 
-   checkpoints.save(epoch, model, trainer.optimState, bestModel)
+   checkpoints.save(epoch, model, trainer.optimState, bestModel, opt)
 end
 
 print(string.format(' * Results avg.class acc: %6.3f  avg.acc: %6.3f', cacc, acc))
