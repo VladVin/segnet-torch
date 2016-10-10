@@ -14,11 +14,11 @@ require 'image'
 local M = {}
 
 function M.Compose(transforms)
-   return function(input)
+   return function(input, label)
       for _, transform in ipairs(transforms) do
-         input = transform(input)
+         input, label = transform(input, label)
       end
-      return input
+      return input, label
    end
 end
 
@@ -36,25 +36,25 @@ end
 -- Scales the smaller edge to size
 function M.Scale(size, interpolation)
    interpolation = interpolation or 'bicubic'
-   return function(input)
+   return function(input, label)
       local w, h = input:size(3), input:size(2)
       if (w <= h and w == size) or (h <= w and h == size) then
          return input
       end
       if w < h then
-         return image.scale(input, size, h/w * size, interpolation)
+         return image.scale(input, size, h/w * size, interpolation), image.scale(label, size, h/w * size, 'simple')
       else
-         return image.scale(input, w/h * size, size, interpolation)
+         return image.scale(input, w/h * size, size, interpolation), image.scale(label, size, h/w * size, 'simple')
       end
    end
 end
 
 -- Crop to centered rectangle
-function M.CenterCrop(size)
-   return function(input)
-      local w1 = math.ceil((input:size(3) - size)/2)
-      local h1 = math.ceil((input:size(2) - size)/2)
-      return image.crop(input, w1, h1, w1 + size, h1 + size) -- center patch
+function M.CenterCrop(target_h, target_w)
+   return function(input, label)
+      local w1 = math.ceil((input:size(3) - target_w)/2)
+      local h1 = math.ceil((input:size(2) - target_h)/2)
+      return image.crop(input, w1, h1, w1 + target_w, h1 + target_h), image.crop(label, w1, h1, w1 + target_w, h1 + target_h) -- center patch
    end
 end
 
@@ -131,7 +131,7 @@ function M.RandomSizedCrop(size)
    local scale = M.Scale(size)
    local crop = M.CenterCrop(size)
 
-   return function(input)
+   return function(input, label)
       local attempt = 0
       repeat
          local area = input:size(2) * input:size(3)
@@ -149,16 +149,17 @@ function M.RandomSizedCrop(size)
             local y1 = torch.random(0, input:size(2) - h)
             local x1 = torch.random(0, input:size(3) - w)
 
-            local out = image.crop(input, x1, y1, x1 + w, y1 + h)
-            assert(out:size(2) == h and out:size(3) == w, 'wrong crop size')
+            local out_input = image.crop(input, x1, y1, x1 + w, y1 + h)
+            local out_label = image.crop(label, x1, y1, x1 + w, y1 + h)
+            assert(out_input:size(2) == h and out_input:size(3) == w, 'wrong crop size')
 
-            return image.scale(out, size, size, 'bicubic')
+            return image.scale(out_input, size, size, 'bicubic'), image.scale(out_label, size, size, 'simple')
          end
          attempt = attempt + 1
       until attempt >= 10
 
       -- fallback
-      return crop(scale(input))
+      return crop(scale(input, label))
    end
 end
 
@@ -172,11 +173,13 @@ function M.HorizontalFlip(prob)
 end
 
 function M.Rotation(deg)
-   return function(input)
+   return function(input, label)
       if deg ~= 0 then
-         input = image.rotate(input, (torch.uniform() - 0.5) * deg * math.pi / 180, 'bilinear')
+         angle = (torch.uniform() - 0.5) * deg * math.pi / 180
+         input = image.rotate(input, angle, 'bilinear')
+         label = image.rotate(label, angle, 'simple')
       end
-      return input
+      return input, label
    end
 end
 
@@ -287,6 +290,40 @@ function M.ColorJitter(opt)
    end
 
    return M.RandomOrder(ts)
+end
+
+function M.OneHotLabel(nclasses)
+    return function(input, label)
+        local oneHot = torch.Tensor(nclasses,label:size(1),label:size(2))
+        for i = 1,nclasses do
+            oneHot[i] = label:eq(i)
+        end
+        label = oneHot
+        return input, label
+    end
+end
+
+function M.CatLabel()
+    return function(input, label)
+        _, ar = torch.max(label, 1)
+        label = ar[1]
+        return input, label
+    end
+end
+
+--- [[Structural Noise]] ---
+function M.ElasticTransform(alpha, sigma)
+    return function (input, label)
+        H = input:size(2)
+        W = input:size(3)
+        filterSize = math.max(5,math.ceil(3*sigma))
+
+        flow = torch.rand(2, H, W)*2 - 1
+        kernel = image.gaussian(filterSize, sigma, 1, true)
+        flow = image.convolve(flow, kernel, 'same')*alpha
+
+        return image.warp(input, flow), image.warp(label, flow)
+    end
 end
 
 return M

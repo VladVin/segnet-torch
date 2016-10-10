@@ -29,10 +29,15 @@ function DataLoader.create(opt)
 end
 
 function DataLoader:__init(dataset, opt, split)
+   local manualSeed = opt.manualSeed
    local function init()
       require('datasets/' .. opt.dataset)
    end
    local function main(idx)
+      if manualSeed ~= 0 then
+         torch.manualSeed(manualSeed + idx)
+      end
+      torch.setnumthreads(1)
       _G.dataset = dataset
       _G.preprocess = dataset:preprocess()
       return dataset:size()
@@ -61,23 +66,28 @@ function DataLoader:run()
          threads:addjob(
             function(indices, nCrops)
                local sz = indices:size(1)
-               local batch, imageSize
-               local target = torch.IntTensor(sz)
+               local batch, target_batch, imageSize
                for i, idx in ipairs(indices:totable()) do
                   local sample = _G.dataset:get(idx)
-                  local input = _G.preprocess(sample.input)
+                  print(sample)
+                  local input, target = _G.preprocess(sample.input, sample.target)
                   if not batch then
                      imageSize = input:size():totable()
-                     if nCrops > 1 then table.remove(imageSize, 1) end
+                     targetSize = target:size():totable()
+                     if nCrops > 1 then 
+                         table.remove(imageSize, 1)
+                         table.remove(targetSize, 1) 
+                     end
                      batch = torch.FloatTensor(sz, nCrops, table.unpack(imageSize))
+                     target_batch = torch.FloatTensor(sz, nCrops, table.unpack(targetSize))
                   end
                   batch[i]:copy(input)
-                  target[i] = sample.target
+                  target_batch[i]:copy(target)
                end
                collectgarbage()
                return {
                   input = batch:view(sz * nCrops, table.unpack(imageSize)),
-                  target = target,
+                  target = target_batch:view(sz * nCrops, table.unpack(targetSize)),
                }
             end,
             function(_sample_)

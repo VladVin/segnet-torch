@@ -17,8 +17,8 @@ function M.parse(arg)
     ------------ General options --------------------
 
    cmd:option('-data',       '',         'Path to dataset')
-   cmd:option('-dataset',    'imagenet', 'Options: imagenet | cifar10')
-   cmd:option('-manualSeed', 2,          'Manually set RNG seed')
+   cmd:option('-dataset',    'camvid', 'Options: imagenet | cityscapes | camvid')
+   cmd:option('-manualSeed', 0,          'Manually set RNG seed')
    cmd:option('-nGPU',       1,          'Number of GPUs to use by default')
    cmd:option('-backend',    'cudnn',    'Options: cudnn | cunn')
    cmd:option('-cudnn',      'fastest',  'Options: fastest | default | deterministic')
@@ -28,7 +28,9 @@ function M.parse(arg)
    ------------- Training options --------------------
    cmd:option('-nEpochs',         0,       'Number of total epochs to run')
    cmd:option('-epochNumber',     1,       'Manual epoch number (useful on restarts)')
-   cmd:option('-batchSize',       32,      'mini-batch size (1 = pure stochastic)')
+   cmd:option('-batchSize',       1,       'mini-batch size (1 = pure stochastic)')
+   cmd:option('-imgH',            0,       'input height')
+   cmd:option('-imgW',            0,       'input width')
    cmd:option('-testOnly',        'false', 'Run on validation set only')
    cmd:option('-tenCrop',         'false', 'Ten-crop testing')
    cmd:option('-resume',          'none',  'Path to directory containing checkpoint')
@@ -37,15 +39,15 @@ function M.parse(arg)
    cmd:option('-momentum',        0.9,   'momentum')
    cmd:option('-weightDecay',     1e-4,  'weight decay')
    ---------- Model options ----------------------------------
-   cmd:option('-netType',      'resnet', 'Options: resnet')
-   cmd:option('-depth',        34,       'ResNet depth: 18 | 34 | 50 | 101 | ...', 'number')
-   cmd:option('-shortcutType', '',       'Options: A | B | C')
+   cmd:option('-netType',      'segnet', 'Options: segnet | deconvnet | headless')
+--   cmd:option('-depth',        34,       'ResNet depth: 18 | 34 | 50 | 101 | ...', 'number')
+--   cmd:option('-shortcutType', '',       'Options: A | B | C')
    cmd:option('-retrain',      'none',   'Path to model to retrain with')
    cmd:option('-optimState',   'none',   'Path to an optimState to reload from')
    ---------- Model options ----------------------------------
    cmd:option('-shareGradInput',  'false', 'Share gradInput tensors to reduce memory usage')
    cmd:option('-resetClassifier', 'false', 'Reset the fully connected layer for fine-tuning')
-   cmd:option('-nClasses',         0,      'Number of classes in the dataset')
+   cmd:option('-nClasses',         14,      'Number of classes in the dataset')
    cmd:text()
 
    local opt = cmd:parse(arg or {})
@@ -57,19 +59,19 @@ function M.parse(arg)
 
    if opt.dataset == 'imagenet' then
       -- Handle the most common case of missing -data flag
-      local trainDir = paths.concat(opt.data, 'train')
       if not paths.dirp(opt.data) then
          cmd:error('error: missing ImageNet data directory')
-      elseif not paths.dirp(trainDir) then
-         cmd:error('error: ImageNet missing `train` directory: ' .. trainDir)
       end
-      -- Default shortcutType=B and nEpochs=90
-      opt.shortcutType = opt.shortcutType == '' and 'B' or opt.shortcutType
-      opt.nEpochs = opt.nEpochs == 0 and 90 or opt.nEpochs
-   elseif opt.dataset == 'cifar10' then
-      -- Default shortcutType=A and nEpochs=164
-      opt.shortcutType = opt.shortcutType == '' and 'A' or opt.shortcutType
-      opt.nEpochs = opt.nEpochs == 0 and 164 or opt.nEpochs
+      -- Default nEpochs=10
+      opt.nEpochs = opt.nEpochs == 0 and 10 or opt.nEpochs
+      opt.imgH = opt.imgH == 0 and 224 or opt.nEpochs
+      opt.imgW = opt.imgW == 0 and 224 or opt.nEpochs
+   elseif opt.dataset == 'cityscapes' then
+      opt.nEpochs = opt.nEpochs == 0 and 10 or opt.nEpochs
+   elseif opt.dataset == 'camvid' then
+      opt.nEpochs = opt.nEpochs == 0 and 10 or opt.nEpochs
+      opt.imgH = opt.imgH == 0 and 240 or opt.nEpochs
+      opt.imgW = opt.imgW == 0 and 320 or opt.nEpochs
    else
       cmd:error('unknown dataset: ' .. opt.dataset)
    end
@@ -79,7 +81,7 @@ function M.parse(arg)
          cmd:error('-nClasses required when resetClassifier is set')
       end
    end
-
+   print(opt)
    return opt
 end
 

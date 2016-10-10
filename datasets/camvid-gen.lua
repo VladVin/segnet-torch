@@ -1,5 +1,6 @@
 --
 --  Copyright (c) 2016, Facebook, Inc.
+--  Copyright (c) 2016, Fedor Chervinskii
 --  All rights reserved.
 --
 --  This source code is licensed under the BSD-style license found in the
@@ -18,24 +19,7 @@ local ffi = require 'ffi'
 
 local M = {}
 
-local function findClasses(dir)
-   local dirs = paths.dir(dir)
-   table.sort(dirs)
-
-   local classList = {}
-   local classToIdx = {}
-   for _ ,class in ipairs(dirs) do
-      if not classToIdx[class] and class ~= '.' and class ~= '..' then
-         table.insert(classList, class)
-         classToIdx[class] = #classList
-      end
-   end
-
-   -- assert(#classList == 1000, 'expected 1000 ImageNet classes')
-   return classList, classToIdx
-end
-
-local function findImages(dir, classToIdx)
+local function findImages(dir)
    local imagePath = torch.CharTensor()
    local imageClass = torch.LongTensor()
 
@@ -56,22 +40,15 @@ local function findImages(dir, classToIdx)
    local counter = 0
 
    -- Generate a list of all the images and their class
-   while counter < 5000000 do
+   while true do
       local line = f:read('*line')
       if not line then break end
       counter = counter + 1
       if counter % 100 == 0 then print(counter) end
-      local className = paths.basename(paths.dirname(line))
-      local filename = paths.basename(line)
-      local path = className .. '/' .. filename
 
-      local classId = classToIdx[className]
-      assert(classId, 'class not found: ' .. className)
+      table.insert(imagePaths, line)
 
-      table.insert(imagePaths, path)
-      table.insert(imageClasses, classId)
-
-      maxLength = math.max(maxLength, #path + 1)
+      maxLength = math.max(maxLength, #line + 1)
    end
 
    f:close()
@@ -83,36 +60,35 @@ local function findImages(dir, classToIdx)
       ffi.copy(imagePath[i]:data(), path)
    end
 
-   local imageClass = torch.LongTensor(imageClasses)
-   return imagePath, imageClass
+   return imagePath
 end
 
 function M.exec(opt, cacheFile)
+
    -- find the image path names
-   local imagePath = torch.CharTensor()  -- path to each image in dataset
-   local imageClass = torch.LongTensor() -- class index of each image (class index in self.classes)
-
-   print("=> Generating list of images")
-   local classList, classToIdx = findClasses(opt.data)
-
    print(" | finding all images")
-   local ImagePath, ImageClass = findImages(opt.data, classToIdx)
+   local ImagePath = findImages(opt.data .. '/frames')
+   local LabelPath = findImages(opt.data .. '/labels')
 
 -- dummy split since labels don't matter
 
-   N = ImagePath:size(1)
-   opt.imgSize = {224,224}
-
+   if ImagePath:nElement() == 0 then
+       print("no images found in the directory, probably wrong path")
+       N = 0
+   else
+       N = ImagePath:size(1)
+   end
+        
    local info = {
       basedir = opt.data,
       classList = classList,
       train = {
          imagePath = ImagePath[{{1,N*0.8},{}}],
-         imageClass = ImageClass[{{1,N*0.8}}],
+         labelPath = LabelPath[{{1,N*0.8},{}}],
       },
       val = {
          imagePath = ImagePath[{{N*0.8+1,N},{}}],
-         imageClass = ImageClass[{{N*0.8+1,N}}],
+         labelPath = LabelPath[{{N*0.8+1,N},{}}],
       },
    }
 
